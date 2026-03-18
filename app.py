@@ -1,47 +1,42 @@
 import os
-import torch
 import numpy as np
 import cv2
+from flask import Flask, render_template, request, send_file
 
-# ❗ Only import tensorflow locally
+# 🔥 Detect if running on Render
 DEPLOY = os.environ.get("RENDER") == "true"
 
+# Only import heavy libs locally
 if not DEPLOY:
+    import torch
     import tensorflow as tf
+    from torchvision.models.detection import fasterrcnn_resnet50_fpn
+    from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+    from ultralytics import YOLO
 
-from flask import Flask, render_template, request, send_file
-from torchvision.models.detection import fasterrcnn_resnet50_fpn
-from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-from ultralytics import YOLO
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
 app = Flask(__name__)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# ---------------- LOAD MODELS ----------------
-
-faster_model = fasterrcnn_resnet50_fpn(weights=None)
-in_features = faster_model.roi_heads.box_predictor.cls_score.in_features
-faster_model.roi_heads.box_predictor = FastRCNNPredictor(in_features, 2)
-faster_model.load_state_dict(torch.load("models/FASTER_RCNN.pth", map_location=device))
-faster_model.to(device)
-faster_model.eval()
-
-yolo_model = YOLO("models/yolov8.pt")
-
-# ✅ Conditional MINN load
+# ---------------- LOCAL MODEL LOAD ----------------
 if not DEPLOY:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    faster_model = fasterrcnn_resnet50_fpn(weights=None)
+    in_features = faster_model.roi_heads.box_predictor.cls_score.in_features
+    faster_model.roi_heads.box_predictor = FastRCNNPredictor(in_features, 2)
+    faster_model.load_state_dict(torch.load("models/FASTER_RCNN.pth", map_location=device))
+    faster_model.to(device)
+    faster_model.eval()
+
+    yolo_model = YOLO("models/yolov8.pt")
     minn_model = tf.keras.models.load_model("models/minn_final.keras")
-else:
-    minn_model = None
 
 CONF_THRESHOLD = 0.5
 
 
 # ---------------- DETECTION ----------------
-
 def detect_faster(image):
     img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     img_tensor = torch.from_numpy(img / 255.).permute(2, 0, 1).float().to(device)
@@ -70,8 +65,7 @@ def detect_yolo(image):
     )
 
 
-# ---------------- YIELD ESTIMATION ----------------
-
+# ---------------- YIELD ----------------
 def estimate_yield(image, boxes):
     total = 0
     cluster_weights = []
@@ -90,11 +84,7 @@ def estimate_yield(image, boxes):
         area = (x2 - x1) * (y2 - y1)
         area_input = np.array([[area]])
 
-        # ✅ Conditional prediction
-        if minn_model:
-            pred = minn_model.predict([crop, area_input], verbose=0)[0][0]
-        else:
-            pred = 50  # fallback for deployment
+        pred = minn_model.predict([crop, area_input], verbose=0)[0][0]
 
         total += pred
         cluster_weights.append(float(pred))
@@ -104,8 +94,7 @@ def estimate_yield(image, boxes):
     return float(round(total / 1000, 2)), cluster_weights, image
 
 
-# ---------------- ROUTES ----------------
-
+# ---------------- ROUTE ----------------
 @app.route("/", methods=["GET", "POST"])
 def index():
 
@@ -116,8 +105,6 @@ def index():
         if not file or file.filename == "":
             return "No file selected", 400
 
-        model_choice = request.form.get("model")
-
         upload_path = "static/uploads"
         os.makedirs(upload_path, exist_ok=True)
 
@@ -125,6 +112,21 @@ def index():
         file.save(filepath)
 
         image = cv2.imread(filepath)
+
+        # 🚀 DEPLOY MODE (NO MODELS)
+        if DEPLOY:
+            return render_template(
+                "index.html",
+                filename=file.filename,
+                model_used="Demo Mode",
+                detected_clusters=5,
+                estimated_yield=2.4,
+                confidence=92.5,
+                cluster_weights=[120, 150, 130, 140, 160]
+            )
+
+        # 🔥 LOCAL MODE (REAL MODELS)
+        model_choice = request.form.get("model")
 
         if model_choice == "faster":
             boxes, confidence = detect_faster(image)
@@ -156,7 +158,6 @@ def index():
 
 
 # ---------------- PDF ----------------
-
 @app.route("/download_report/<yield_value>")
 def download_report(yield_value):
 
@@ -175,6 +176,7 @@ def download_report(yield_value):
     return send_file(file_path, as_attachment=True)
 
 
+# ---------------- RUN ----------------
 if __name__ == "__main__":
-    port=int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)

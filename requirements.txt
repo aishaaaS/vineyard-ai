@@ -1,8 +1,5 @@
 flask
 gunicorn
-torch
-torchvision
-ultralytics
 opencv-python-headless
 reportlab
 numpy
