@@ -2,7 +2,13 @@ import os
 import torch
 import numpy as np
 import cv2
-import tensorflow as tf
+
+# ❗ Only import tensorflow locally
+DEPLOY = os.environ.get("RENDER") == "true"
+
+if not DEPLOY:
+    import tensorflow as tf
+
 from flask import Flask, render_template, request, send_file
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -14,6 +20,8 @@ app = Flask(__name__)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# ---------------- LOAD MODELS ----------------
+
 faster_model = fasterrcnn_resnet50_fpn(weights=None)
 in_features = faster_model.roi_heads.box_predictor.cls_score.in_features
 faster_model.roi_heads.box_predictor = FastRCNNPredictor(in_features, 2)
@@ -22,10 +30,17 @@ faster_model.to(device)
 faster_model.eval()
 
 yolo_model = YOLO("models/yolov8.pt")
-minn_model = tf.keras.models.load_model("models/minn_final.keras")
+
+# ✅ Conditional MINN load
+if not DEPLOY:
+    minn_model = tf.keras.models.load_model("models/minn_final.keras")
+else:
+    minn_model = None
 
 CONF_THRESHOLD = 0.5
 
+
+# ---------------- DETECTION ----------------
 
 def detect_faster(image):
     img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -55,6 +70,8 @@ def detect_yolo(image):
     )
 
 
+# ---------------- YIELD ESTIMATION ----------------
+
 def estimate_yield(image, boxes):
     total = 0
     cluster_weights = []
@@ -73,7 +90,11 @@ def estimate_yield(image, boxes):
         area = (x2 - x1) * (y2 - y1)
         area_input = np.array([[area]])
 
-        pred = minn_model.predict([crop, area_input], verbose=0)[0][0]
+        # ✅ Conditional prediction
+        if minn_model:
+            pred = minn_model.predict([crop, area_input], verbose=0)[0][0]
+        else:
+            pred = 50  # fallback for deployment
 
         total += pred
         cluster_weights.append(float(pred))
@@ -82,6 +103,8 @@ def estimate_yield(image, boxes):
 
     return float(round(total / 1000, 2)), cluster_weights, image
 
+
+# ---------------- ROUTES ----------------
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -132,6 +155,7 @@ def index():
     return render_template("index.html")
 
 
+# ---------------- PDF ----------------
 
 @app.route("/download_report/<yield_value>")
 def download_report(yield_value):
