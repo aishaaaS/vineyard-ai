@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Smart Vineyard Yield Intelligence</title>
+    <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍇</text></svg>">
+</head>
+<body>
+
+<div class="header">
+    <h1>🌿 Smart Vineyard Yield Intelligence</h1>
+    <p>AI-powered grape cluster detection & yield estimation</p>
+</div>
+
+<div class="main-container">
+
+
+    <div class="card upload-card">
+
+        <h2>Upload Vineyard Image</h2>
+
+        <form method="POST" enctype="multipart/form-data">
+
+            
+            <div class="drop-zone" id="dropZone">
+                <input type="file" name="file" id="fileInput" hidden required>
+                <div class="drop-content">
+                    <p id="dropText">📁 Drag & Drop Image Here</p>
+                    <span>or click to browse</span>
+                </div>
+            </div>
+
+            
+            <div class="model-select">
+
+                <label class="model-card">
+                    <input type="radio" name="model" value="faster" checked>
+                    <div>
+                        <h3>Faster R-CNN</h3>
+                        <p>High precision region-based detection</p>
+                    </div>
+                </label>
+
+                <label class="model-card">
+                    <input type="radio" name="model" value="yolo">
+                    <div>
+                        <h3>YOLOv8</h3>
+                        <p>Real-time object detection</p>
+                    </div>
+                </label>
+
+                <label class="model-card">
+                    <input type="radio" name="model" value="minn">
+                    <div>
+                        <h3>MINN</h3>
+                        <p>Multi-Input Neural Network Estimator</p>
+                    </div>
+                </label>
+
+            </div>
+
+            <button type="submit" class="analyze-btn">
+                🌿 Analyze Vineyard
+            </button>
+
+        </form>
+
+        {% if filename %}
+        <img class="result-img"
+             src="{{ url_for('static', filename='uploads/' + filename) }}">
+        {% endif %}
+
+    </div>
+
+
+    
+    {% if detected_clusters is defined %}
+    <div class="card results-card">
+
+        <h2>Analysis Results</h2>
+
+        <div class="result-grid">
+            <div>
+                <h4>Model Used</h4>
+                <p>{{ model_used }}</p>
+            </div>
+
+            <div>
+                <h4>Clusters Detected</h4>
+                <p>{{ detected_clusters }}</p>
+            </div>
+
+            <div>
+                <h4>Estimated Yield</h4>
+                <p><span id="yieldCounter">0</span> kg</p>
+            </div>
+
+            <div>
+                <h4>Confidence</h4>
+                <p>{{ confidence }}%</p>
+            </div>
+        </div>
+
+        <a href="/download_report/{{ estimated_yield }}">
+            <button class="analyze-btn">Download PDF Report</button>
+        </a>
+
+        <h3>Historical Yield Trend</h3>
+        <canvas id="yieldChart"></canvas>
+
+        <h3>Cluster Weight Distribution</h3>
+        <canvas id="clusterChart"></canvas>
+
+    </div>
+    {% endif %}
+</div>
+
+{% if detected_clusters is defined %}
+<script>
+
+let target = {{ estimated_yield | default(0) }};
+const clusterData = {{ cluster_weights | default([]) | tojson }};
+
+let count = 0;
+let step = target / 50;
+
+let interval = setInterval(() => {
+    count += step;
+    if (count >= target) {
+        count = target;
+        clearInterval(interval);
+    }
+    document.getElementById("yieldCounter").innerText = count.toFixed(2);
+}, 20);
+
+
+
+new Chart(document.getElementById("yieldChart"), {
+    type: 'line',
+    data: {
+        labels: ['Jan','Feb','Mar','Apr','May','Current'],
+        datasets: [{
+            label: 'Yield (kg)',
+            data: [1.2,1.8,2.3,1.9,2.5,target],
+            borderColor: '#b7e4c7',
+            backgroundColor: 'rgba(183,228,199,0.2)',
+            fill: true,
+            tension: 0.4
+        }]
+    },
+    options: {
+        plugins: {
+            legend: { labels: { color: "#ffffff" } }
+        },
+        scales: {
+            x: {
+                ticks: { color: "#ffffff" },
+                grid: { color: "rgba(255,255,255,0.1)" }
+            },
+            y: {
+                ticks: { color: "#ffffff" },
+                grid: { color: "rgba(255,255,255,0.1)" }
+            }
+        }
+    }
+});
+
+new Chart(document.getElementById("clusterChart"), {
+    type: 'bar',
+    data: {
+        labels: clusterData.map((_,i)=>`Cluster ${i+1}`),
+        datasets: [{
+            label: 'Weight (g)',
+            data: clusterData,
+            backgroundColor: '#52b788'
+        }]
+    },
+    options: {
+        plugins: {
+            legend: { labels: { color: "#ffffff" } }
+        },
+        scales: {
+            x: {
+                ticks: { color: "#ffffff" },
+                grid: { color: "rgba(255,255,255,0.1)" }
+            },
+            y: {
+                ticks: { color: "#ffffff" },
+                grid: { color: "rgba(255,255,255,0.1)" }
+            }
+        }
+    }
+});
+
+</script>
+{% endif %}
+
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const dropZone = document.getElementById("dropZone");
+    const fileInput = document.getElementById("fileInput");
+    const dropText = document.getElementById("dropText");
+
+    dropZone.addEventListener("click", () => fileInput.click());
+
+    fileInput.addEventListener("change", () => {
+        if (fileInput.files.length > 0) {
+            dropText.innerText = fileInput.files[0].name;
+        }
+    });
+
+    dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("dragover");
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+        dropZone.classList.remove("dragover");
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("dragover");
+
+        if (e.dataTransfer.files.length > 0) {
+            fileInput.files = e.dataTransfer.files;
+            dropText.innerText = e.dataTransfer.files[0].name;
+        }
+    });
+
+});
+</script>
+
+</body>
+</html>

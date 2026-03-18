@@ -1,0 +1,9 @@
+flask
+gunicorn
+torch
+torchvision
+ultralytics
+tensorflow
+opencv-python-headless
+reportlab
+numpy
